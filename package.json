@@ -1,0 +1,14 @@
+{
+  "name": "ais-ship-tracker-backend",
+  "version": "1.0.0",
+  "description": "船舶追踪后端服务 - 部署于 Railway",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5"
+  }
+}
