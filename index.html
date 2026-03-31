@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>船舶实时追踪 - AIS数据</title>
+    <!-- Leaflet CSS 和 JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        .info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            font-size: 12px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="info">
+    🚢 船舶实时位置 | 数据来源: aisstream.io
+</div>
+
+<script>
+    // ================== 配置区域 ==================
+    const API_KEY = 'YOUR_API_KEY';  // 请替换为你的 aisstream.io API Key
+    // 可选：限制显示的区域（纬度范围 -90 到 90，经度范围 -180 到 180）
+    const BOUNDING_BOX = [[-90, -180], [90, 180]];
+    // ============================================
+
+    // 初始化地图，默认视角为中国附近海域（可自行调整）
+    const map = L.map('map').setView([31.0, 122.0], 5);
+    
+    // 使用 OpenStreetMap 瓦片图层（免费，无需API Key）
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18
+    }).addTo(map);
+
+    // 存储船舶标记的字典，用于更新位置时移除旧标记或更新
+    const shipMarkers = new Map();
+
+    // 连接 aisstream.io 的 WebSocket
+    const socket = new WebSocket('wss://stream.aisstream.io/v0/stream');
+
+    socket.onopen = () => {
+        console.log('WebSocket 连接已建立');
+        // 发送订阅消息
+        const subscribeMsg = {
+            Apikey: API_KEY,
+            BoundingBoxes: [BOUNDING_BOX],
+            // 只订阅位置报告消息，减少数据量（可选：还有其他类型如静态数据）
+            FilterMessageTypes: ['PositionReport']
+        };
+        socket.send(JSON.stringify(subscribeMsg));
+        console.log('已发送订阅请求');
+    };
+
+    socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        // 只处理位置报告类型
+        if (data.MessageType === 'PositionReport') {
+            const meta = data.MetaData;
+            const pos = data.Message.PositionReport;
+            if (!meta || !pos) return;
+
+            const mmsi = meta.MMSI;
+            const lat = pos.Latitude;
+            const lng = pos.Longitude;
+            const sog = pos.SpeedOverGround;   // 航速，节
+            const cog = pos.CourseOverGround;  // 航向，度
+            const shipName = meta.ShipName || `MMSI: ${mmsi}`;
+            const timestamp = meta.time_utc ? new Date(meta.time_utc).toLocaleString() : '未知时间';
+
+            // 如果坐标无效则跳过
+            if (lat === undefined || lng === undefined) return;
+
+            // 构建弹出窗口内容
+            const popupContent = `
+                <strong>${shipName}</strong><br>
+                MMSI: ${mmsi}<br>
+                位置: ${lat.toFixed(4)}, ${lng.toFixed(4)}<br>
+                航速: ${sog !== undefined ? sog.toFixed(1) : '?'} 节<br>
+                航向: ${cog !== undefined ? cog.toFixed(0) : '?'}°<br>
+                时间: ${timestamp}
+            `;
+
+            // 如果该船已有标记，则更新位置（移动标记）
+            if (shipMarkers.has(mmsi)) {
+                const marker = shipMarkers.get(mmsi);
+                marker.setLatLng([lat, lng]);
+                marker.setPopupContent(popupContent);
+                // 可选：更新图标方向（若需用航向旋转图标，可更换图标）
+            } else {
+                // 创建新标记
+                const marker = L.marker([lat, lng]).addTo(map)
+                    .bindPopup(popupContent);
+                shipMarkers.set(mmsi, marker);
+                // 可选：自动打开新船的弹窗
+                // marker.openPopup();
+            }
+        }
+    };
+
+    socket.onerror = (error) => {
+        console.error('WebSocket 错误:', error);
+        alert('连接 aisstream.io 失败，请检查 API Key 或网络。');
+    };
+
+    socket.onclose = (event) => {
+        console.log('WebSocket 连接关闭', event.code, event.reason);
+        if (event.code !== 1000) {
+            // 非正常关闭，尝试重连（简单延迟重试）
+            setTimeout(() => {
+                console.log('尝试重新连接...');
+                window.location.reload(); // 简单重载页面
+            }, 5000);
+        }
+    };
+</script>
+</body>
+</html>
